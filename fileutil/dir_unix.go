@@ -1,4 +1,4 @@
-// Copyright 2015 The etcd Authors
+// Copyright 2016 The etcd Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,18 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package walpb
+// +build !windows
 
-import "errors"
+package fileutil
 
-var (
-	ErrCRCMismatch = errors.New("walpb: crc mismatch")
+import "os"
+
+const (
+	// PrivateDirMode grants owner to make/remove files inside the directory.
+	PrivateDirMode = 0700
 )
 
-func (rec *Record) Validate(crc uint32) error {
-	if rec.GetCrc() == crc {
-		return nil
-	}
-	rec.Reset()
-	return ErrCRCMismatch
-}
+// OpenDir opens a directory for syncing.
+func OpenDir(path string) (*os.File, error) { return os.Open(path) }

@@ -27,8 +27,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/golang/protobuf/proto" // nolint
 	"github.com/rs/zerolog/log"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/amazingchow/photon-dance-wal/fileutil"
 	"github.com/amazingchow/photon-dance-wal/walpb"
@@ -76,9 +76,9 @@ type WAL struct {
 
 	metadata []byte // metadata recorded at the head of each WAL
 
-	start     walpb.Snapshot // snapshot to start reading
-	decoder   *decoder       // decoder to decode records
-	readClose func() error   // closer for decode reader
+	start     *walpb.Snapshot // snapshot to start reading
+	decoder   *decoder        // decoder to decode records
+	readClose func() error    // closer for decode reader
 
 	unsafeNoSync bool // if set, do not fsync
 
@@ -144,7 +144,7 @@ func Create(dirpath string, metadata []byte) (*WAL, error) {
 	if err = w.encoder.encode(&walpb.Record{Type: walpb.RecordType_MetadataType, Data: metadata}); err != nil {
 		return nil, err
 	}
-	if err = w.SaveSnapshot(walpb.Snapshot{}); err != nil {
+	if err = w.SaveSnapshot(&walpb.Snapshot{}); err != nil {
 		return nil, err
 	}
 
@@ -175,7 +175,7 @@ func Create(dirpath string, metadata []byte) (*WAL, error) {
 		return nil
 	}
 	if perr = fileutil.Fsync(pdir); perr != nil {
-		dirCloser()
+		dirCloser() // nolint
 		log.Warn().Err(perr).Str("parent-dir-path", filepath.Dir(w.dir)).Str("dir-path", w.dir).Msg("failed to fsync the parent data directory file")
 		return nil, perr
 	}
@@ -234,7 +234,7 @@ func (w *WAL) renameWALUnlock(tmpdirpath string) (*WAL, error) {
 	}
 
 	// reopen and relock
-	newWAL, oerr := Open(w.dir, walpb.Snapshot{})
+	newWAL, oerr := Open(w.dir, &walpb.Snapshot{})
 	if oerr != nil {
 		return nil, oerr
 	}
@@ -251,7 +251,7 @@ func (w *WAL) renameWALUnlock(tmpdirpath string) (*WAL, error) {
 // The returned WAL is ready to read and the first record will be the one after
 // the given snap. The WAL cannot be appended to before reading out all of its
 // previous records.
-func Open(dirpath string, snap walpb.Snapshot) (*WAL, error) {
+func Open(dirpath string, snap *walpb.Snapshot) (*WAL, error) {
 	w, err := openAtIndex(dirpath, snap, true)
 	if err != nil {
 		return nil, err
@@ -264,11 +264,11 @@ func Open(dirpath string, snap walpb.Snapshot) (*WAL, error) {
 
 // OpenForRead only opens the wal files for read.
 // Write on a read only wal panics.
-func OpenForRead(dirpath string, snap walpb.Snapshot) (*WAL, error) {
+func OpenForRead(dirpath string, snap *walpb.Snapshot) (*WAL, error) {
 	return openAtIndex(dirpath, snap, false)
 }
 
-func openAtIndex(dirpath string, snap walpb.Snapshot, write bool) (*WAL, error) {
+func openAtIndex(dirpath string, snap *walpb.Snapshot, write bool) (*WAL, error) {
 	names, nameIndex, err := selectWALFiles(dirpath, snap)
 	if err != nil {
 		return nil, err
@@ -293,7 +293,7 @@ func openAtIndex(dirpath string, snap walpb.Snapshot, write bool) (*WAL, error) 
 		// WAL can append without dropping the file lock
 		w.readClose = nil
 		if _, _, err := parseWALName(filepath.Base(w.tail().Name())); err != nil {
-			closer()
+			closer() // nolint
 			return nil, err
 		}
 		w.fp = newFilePipeline(w.dir, SegmentSizeBytes)
@@ -302,7 +302,7 @@ func openAtIndex(dirpath string, snap walpb.Snapshot, write bool) (*WAL, error) 
 	return w, nil
 }
 
-func selectWALFiles(dirpath string, snap walpb.Snapshot) ([]string, int, error) {
+func selectWALFiles(dirpath string, snap *walpb.Snapshot) ([]string, int, error) {
 	names, err := readWALNames(dirpath)
 	if err != nil {
 		return nil, -1, err
@@ -326,7 +326,7 @@ func openWALFiles(dirpath string, names []string, nameIndex int, write bool) ([]
 		if write {
 			l, err := fileutil.TryLockFile(p, os.O_RDWR, fileutil.PrivateFileMode)
 			if err != nil {
-				closeAll(rcs...)
+				closeAll(rcs...) // nolint
 				return nil, nil, nil, err
 			}
 			ls = append(ls, l)
@@ -334,7 +334,7 @@ func openWALFiles(dirpath string, names []string, nameIndex int, write bool) ([]
 		} else {
 			rf, err := os.OpenFile(p, os.O_RDONLY, fileutil.PrivateFileMode)
 			if err != nil {
-				closeAll(rcs...)
+				closeAll(rcs...) // nolint
 				return nil, nil, nil, err
 			}
 			ls = append(ls, nil)
@@ -358,7 +358,7 @@ func openWALFiles(dirpath string, names []string, nameIndex int, write bool) ([]
 // TODO: detect not-last-snap error.
 // TODO: maybe loose the checking of match.
 // After ReadAll, the WAL will be ready for appending new records.
-func (w *WAL) ReadAll() (metadata []byte, entries uint64, ents []walpb.Entry, err error) {
+func (w *WAL) ReadAll() (metadata []byte, entries uint64, ents []*walpb.Entry, err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -384,7 +384,7 @@ func (w *WAL) ReadAll() (metadata []byte, entries uint64, ents []walpb.Entry, er
 					return nil, 0, nil, ErrSliceOutOfRange
 				}
 				// The line below is potentially overriding some 'uncommitted' entries.
-				ents = append(ents[:up], ent)
+				ents = append(ents[:up], &ent)
 				entries++
 			}
 			w.enti = ent.Index
@@ -456,7 +456,7 @@ func (w *WAL) ReadAll() (metadata []byte, entries uint64, ents []walpb.Entry, er
 		w.readClose()
 		w.readClose = nil
 	}
-	w.start = walpb.Snapshot{}
+	w.start = &walpb.Snapshot{}
 
 	w.metadata = metadata
 
@@ -479,7 +479,7 @@ func (w *WAL) ReadAll() (metadata []byte, entries uint64, ents []walpb.Entry, er
 // If it cannot read out the expected snap, it will return ErrSnapshotNotFound.
 // If the loaded snap doesn't match with the expected one, it will
 // return error ErrSnapshotMismatch.
-func Verify(walDir string, snap walpb.Snapshot) error {
+func Verify(walDir string, snap *walpb.Snapshot) error {
 	var metadata []byte
 	var err error
 	var match bool
@@ -499,7 +499,7 @@ func Verify(walDir string, snap walpb.Snapshot) error {
 	}
 	defer func() {
 		if closer != nil {
-			closer()
+			closer() // nolint
 		}
 	}()
 
@@ -523,7 +523,7 @@ func Verify(walDir string, snap walpb.Snapshot) error {
 			decoder.updateCRC(rec.GetCrc())
 		case walpb.RecordType_SnapshotType:
 			var loadedSnap walpb.Snapshot
-			proto.Unmarshal(rec.GetData(), &loadedSnap)
+			proto.Unmarshal(rec.GetData(), &loadedSnap) // nolint
 			if loadedSnap.Index == snap.Index {
 				if loadedSnap.Term != snap.Term {
 					return ErrSnapshotMismatch
@@ -783,8 +783,8 @@ func (w *WAL) Save(ents []walpb.Entry) error {
 	return w.cut()
 }
 
-func (w *WAL) SaveSnapshot(e walpb.Snapshot) error {
-	b, _ := proto.Marshal(&e)
+func (w *WAL) SaveSnapshot(e *walpb.Snapshot) error {
+	b, _ := proto.Marshal(e)
 
 	w.mu.Lock()
 	defer w.mu.Unlock()

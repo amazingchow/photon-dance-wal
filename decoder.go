@@ -21,7 +21,7 @@ import (
 	"io"
 	"sync"
 
-	"google.golang.org/protobuf/proto"
+	"github.com/golang/protobuf/proto" // nolint
 
 	"github.com/amazingchow/photon-dance-wal/crc"
 	"github.com/amazingchow/photon-dance-wal/walpb"
@@ -106,7 +106,7 @@ func (d *decoder) decodeRecord(rec *walpb.Record) error {
 
 	// skip crc checking if the record type is crcType
 	if rec.GetType() != walpb.RecordType_CrcType {
-		d.crc.Write(rec.Data)
+		d.crc.Write(rec.Data) // nolint
 		if err := rec.Validate(d.crc.Sum32()); err != nil {
 			if d.isTornEntry(data) {
 				return io.ErrUnexpectedEOF

@@ -21,7 +21,7 @@ import (
 	"os"
 	"sync"
 
-	"google.golang.org/protobuf/proto"
+	"github.com/golang/protobuf/proto" // nolint
 
 	"github.com/amazingchow/photon-dance-wal/crc"
 	"github.com/amazingchow/photon-dance-wal/ioutil"
@@ -65,7 +65,7 @@ func (e *encoder) encode(rec *walpb.Record) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	e.crc.Write(rec.Data)
+	e.crc.Write(rec.Data) // nolint
 	rec.Crc = e.crc.Sum32()
 	var (
 		data []byte
@@ -81,11 +81,12 @@ func (e *encoder) encode(rec *walpb.Record) error {
 		}
 	} else {
 		// !!! use protobuf/proto instead of gogo/proto
-		pbuf := proto.Newbuffer(e.buf)
-		n, err = pbuf.Marshal(rec)
+		pbuf := proto.NewBuffer(e.buf)
+		err = pbuf.Marshal(rec)
 		if err != nil {
 			return err
 		}
+		n = len(pbuf.Bytes())
 		data = e.buf[:n]
 	}
 

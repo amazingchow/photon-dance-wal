@@ -21,7 +21,7 @@ var (
 )
 
 func (rec *Record) Validate(crc uint32) error {
-	if rec.Crc == crc {
+	if rec.GetCrc() == crc {
 		return nil
 	}
 	rec.Reset()

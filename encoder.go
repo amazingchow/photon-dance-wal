@@ -37,18 +37,17 @@ type encoder struct {
 	mu sync.Mutex
 	bw *ioutil.PageWriter
 
-	crc       hash.Hash32
-	buf       []byte
-	uint64buf []byte
+	crc        hash.Hash32
+	buf        []byte
+	uint64_buf []byte
 }
 
 func newEncoder(w io.Writer, prevCrc uint32, pageOffset int) *encoder {
 	return &encoder{
-		bw:  ioutil.NewPageWriter(w, walPageBytes, pageOffset),
-		crc: crc.New(prevCrc, crcTable),
-		// 1MB buffer
-		buf:       make([]byte, 1024*1024),
-		uint64buf: make([]byte, 8),
+		bw:         ioutil.NewPageWriter(w, walPageBytes, pageOffset),
+		crc:        crc.New(prevCrc, crcTable),
+		buf:        make([]byte, 1024*1024),
+		uint64_buf: make([]byte, 8),
 	}
 }
 
@@ -82,6 +81,7 @@ func (e *encoder) encode(rec *walpb.Record) error {
 	} else {
 		// !!! use protobuf/proto instead of gogo/proto
 		pbuf := proto.NewBuffer(e.buf)
+		pbuf.Reset()
 		err = pbuf.Marshal(rec)
 		if err != nil {
 			return err
@@ -91,7 +91,7 @@ func (e *encoder) encode(rec *walpb.Record) error {
 	}
 
 	lenField, padBytes := encodeFrameSize(len(data))
-	if err = writeUint64(e.bw, lenField, e.uint64buf); err != nil {
+	if err = writeUint64(e.bw, lenField, e.uint64_buf); err != nil {
 		return err
 	}
 

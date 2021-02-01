@@ -71,8 +71,7 @@ var (
 type WAL struct {
 	dir string // the living directory of the underlay files
 
-	// dirFile is a fd for the wal directory for syncing on Rename
-	dirFile *os.File
+	dirFile *os.File // a fd for the wal directory for syncing on Rename
 
 	metadata []byte // metadata recorded at the head of each WAL
 
@@ -87,12 +86,12 @@ type WAL struct {
 	encoder *encoder // encoder to encode records
 
 	locks []*fileutil.LockedFile // the locked files the WAL holds (the name is increasing)
-	fp    *filePipeline
+	fp    *FilePipeline
 
 	saveStrategy int32
 }
 
-// Cre ate creates a WAL ready for appending records. The given metadata is
+// Create creates a WAL ready for appending records. The given metadata is
 // recorded at the head of each WAL file, and can be retrieved with ReadAll
 // after the file is Open.
 func Create(dirpath string, metadata []byte) (*WAL, error) {
@@ -100,7 +99,7 @@ func Create(dirpath string, metadata []byte) (*WAL, error) {
 		return nil, os.ErrExist
 	}
 
-	// keep temporary wal directory so WAL initialization appears atomic
+	// !!!keep temporary wal directory so WAL initialization appears atomic
 	tmpdirpath := filepath.Clean(dirpath) + ".tmp"
 	if fileutil.Exist(tmpdirpath) {
 		if err := os.RemoveAll(tmpdirpath); err != nil {
@@ -110,7 +109,7 @@ func Create(dirpath string, metadata []byte) (*WAL, error) {
 	defer os.RemoveAll(tmpdirpath)
 
 	if err := fileutil.CreateDirAll(tmpdirpath); err != nil {
-		log.Warn().Err(err).Str("tmp-dir-path", tmpdirpath).Str("dir-path", dirpath).Msg("failed to create a temporary WAL directory")
+		log.Warn().Err(err).Str("tmp-dirpath", tmpdirpath).Str("dirpath", dirpath).Msg("failed to create a temporary WAL directory")
 		return nil, err
 	}
 
@@ -125,7 +124,7 @@ func Create(dirpath string, metadata []byte) (*WAL, error) {
 		return nil, err
 	}
 	if err = fileutil.Preallocate(f.File, SegmentSizeBytes, true); err != nil {
-		log.Warn().Err(err).Str("path", p).Int64("segment-bytes", SegmentSizeBytes).Msg("failed to preallocate an initial WAL file")
+		log.Warn().Err(err).Str("path", p).Int64("segment-size-bytes", SegmentSizeBytes).Msg("failed to preallocate an initial WAL file")
 		return nil, err
 	}
 
@@ -141,7 +140,7 @@ func Create(dirpath string, metadata []byte) (*WAL, error) {
 	if err = w.saveCrc(0); err != nil {
 		return nil, err
 	}
-	if err = w.encoder.encode(&walpb.Record{Type: walpb.RecordType_MetadataType, Data: metadata}); err != nil {
+	if err = w.saveMetadata(metadata); err != nil {
 		return nil, err
 	}
 	if err = w.SaveSnapshot(&walpb.Snapshot{}); err != nil {
@@ -150,7 +149,7 @@ func Create(dirpath string, metadata []byte) (*WAL, error) {
 
 	logDirPath := w.dir
 	if w, err = w.renameWAL(tmpdirpath); err != nil {
-		log.Warn().Err(err).Str("tmp-dir-path", tmpdirpath).Str("dir-path", logDirPath).Msg("failed to rename the temporary WAL directory")
+		log.Warn().Err(err).Str("tmp-dirpath", tmpdirpath).Str("dirpath", logDirPath).Msg("failed to rename the temporary WAL directory")
 		return nil, err
 	}
 
@@ -164,19 +163,19 @@ func Create(dirpath string, metadata []byte) (*WAL, error) {
 	// directory was renamed; sync parent dir to persist rename
 	pdir, perr := fileutil.OpenDir(filepath.Dir(w.dir))
 	if perr != nil {
-		log.Warn().Err(perr).Str("parent-dir-path", filepath.Dir(w.dir)).Str("dir-path", w.dir).Msg("failed to open the parent data directory")
+		log.Warn().Err(perr).Str("parent-dirpath", filepath.Dir(w.dir)).Str("dirpath", w.dir).Msg("failed to open the parent data directory")
 		return nil, perr
 	}
 	dirCloser := func() error {
 		if perr = pdir.Close(); perr != nil {
-			log.Warn().Err(perr).Str("parent-dir-path", filepath.Dir(w.dir)).Str("dir-path", w.dir).Msg("failed to close the parent data directory file")
+			log.Warn().Err(perr).Str("parent-dirpath", filepath.Dir(w.dir)).Str("dirpath", w.dir).Msg("failed to close the parent data directory")
 			return perr
 		}
 		return nil
 	}
 	if perr = fileutil.Fsync(pdir); perr != nil {
+		log.Warn().Err(perr).Str("parent-dirpath", filepath.Dir(w.dir)).Str("dirpath", w.dir).Msg("failed to fsync the parent data directory")
 		dirCloser() // nolint
-		log.Warn().Err(perr).Str("parent-dir-path", filepath.Dir(w.dir)).Str("dir-path", w.dir).Msg("failed to fsync the parent data directory file")
 		return nil, perr
 	}
 	if err = dirCloser(); err != nil {
@@ -191,12 +190,11 @@ func (w *WAL) SetUnsafeNoFsync() {
 }
 
 func (w *WAL) cleanupWAL() {
-	var err error
-	if err = w.Close(); err != nil {
+	if err := w.Close(); err != nil {
 		log.Panic().Err(err).Msg("failed to close WAL during cleanup")
 	}
 	brokenDirName := fmt.Sprintf("%s.broken.%v", w.dir, time.Now().Format("20060102.150405.999999"))
-	if err = os.Rename(w.dir, brokenDirName); err != nil {
+	if err := os.Rename(w.dir, brokenDirName); err != nil {
 		log.Panic().Err(err).Str("source-path", w.dir).Str("rename-path", brokenDirName).Msg("failed to rename WAL during cleanup")
 	}
 }
@@ -217,7 +215,7 @@ func (w *WAL) renameWAL(tmpdirpath string) (*WAL, error) {
 		}
 		return nil, err
 	}
-	w.fp = newFilePipeline(w.dir, SegmentSizeBytes)
+	w.fp = NewFilePipeline(w.dir, SegmentSizeBytes)
 	df, err := fileutil.OpenDir(w.dir)
 	w.dirFile = df
 	return w, err
@@ -296,7 +294,7 @@ func openAtIndex(dirpath string, snap *walpb.Snapshot, write bool) (*WAL, error)
 			closer() // nolint
 			return nil, err
 		}
-		w.fp = newFilePipeline(w.dir, SegmentSizeBytes)
+		w.fp = NewFilePipeline(w.dir, SegmentSizeBytes)
 	}
 
 	return w, nil
@@ -589,7 +587,7 @@ func (w *WAL) cut() error {
 		return err
 	}
 
-	if err = w.encoder.encode(&walpb.Record{Type: walpb.RecordType_MetadataType, Data: w.metadata}); err != nil {
+	if err = w.saveMetadata(w.metadata); err != nil {
 		return err
 	}
 
@@ -641,14 +639,13 @@ func (w *WAL) sync() error {
 			return err
 		}
 	}
+
 	start := time.Now()
 	err := fileutil.Fdatasync(w.tail().File)
-
 	took := time.Since(start)
 	if took > warnSyncDuration {
-		log.Warn().Float64("took", took.Seconds()).Float64("expected-duration", warnSyncDuration.Seconds()).Msg("slow fdatasync")
+		log.Warn().Float64("sync-took", took.Seconds()).Float64("expected-duration", warnSyncDuration.Seconds()).Msg("slow fdatasync")
 	}
-
 	return err
 }
 
@@ -709,7 +706,7 @@ func (w *WAL) Close() error {
 	defer w.mu.Unlock()
 
 	if w.fp != nil {
-		w.fp.Close()
+		w.fp.Close() // nolint
 		w.fp = nil
 	}
 
@@ -784,16 +781,18 @@ func (w *WAL) Save(ents []walpb.Entry) error {
 }
 
 func (w *WAL) SaveSnapshot(e *walpb.Snapshot) error {
-	b, _ := proto.Marshal(e)
+	b, err := proto.Marshal(e)
+	if err != nil {
+		log.Fatal().Err(err).Msg(("failed to marshal Snapshot"))
+	}
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
-	rec := &walpb.Record{Type: walpb.RecordType_SnapshotType, Data: b}
-	if err := w.encoder.encode(rec); err != nil {
+	if err = w.encoder.encode(&walpb.Record{Type: walpb.RecordType_SnapshotType, Data: b}); err != nil {
 		return err
 	}
-	// update enti only when snapshot is ahead of last index
+	// !!!update enti only when snapshot is ahead of last index
 	if w.enti < e.Index {
 		w.enti = e.Index
 	}
@@ -802,6 +801,10 @@ func (w *WAL) SaveSnapshot(e *walpb.Snapshot) error {
 
 func (w *WAL) saveCrc(prevCrc uint32) error {
 	return w.encoder.encode(&walpb.Record{Type: walpb.RecordType_CrcType, Crc: prevCrc})
+}
+
+func (w *WAL) saveMetadata(metadata []byte) error {
+	return w.encoder.encode(&walpb.Record{Type: walpb.RecordType_MetadataType, Data: metadata})
 }
 
 func (w *WAL) tail() *fileutil.LockedFile {

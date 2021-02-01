@@ -815,13 +815,13 @@ func (w *WAL) tail() *fileutil.LockedFile {
 }
 
 func (w *WAL) seq() uint64 {
-	t := w.tail()
-	if t == nil {
+	lf := w.tail()
+	if lf == nil {
 		return 0
 	}
-	seq, _, err := parseWALName(filepath.Base(t.Name()))
+	seq, _, err := parseWALName(filepath.Base(lf.Name()))
 	if err != nil {
-		log.Fatal().Err(err).Str("name", t.Name()).Msg("failed to parse WAL name")
+		log.Fatal().Err(err).Str("name", lf.Name()).Msg("failed to parse WAL name")
 	}
 	return seq
 }

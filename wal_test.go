@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"math"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"testing"
@@ -145,4 +146,41 @@ func TestOpenAtIndex(t *testing.T) {
 	defer os.RemoveAll(emptydir)
 	_, err = Open(emptydir, &walpb.Snapshot{})
 	assert.Equal(t, ErrFileNotFound, err)
+}
+
+// TestVerify tests that Verify throws a non-nil error when the WAL is corrupted.
+// The test creates a WAL directory and cuts out multiple WAL files. Then
+// it corrupts one of the files by completely truncating it.
+func TestVerify(t *testing.T) {
+	walDir, err := ioutil.TempDir(os.TempDir(), "waltest")
+	assert.Empty(t, err)
+	defer os.RemoveAll(walDir)
+
+	// create WAL
+	w, err := Create(walDir, []byte("data"))
+	assert.Empty(t, err)
+	defer w.Close()
+
+	// make 5 separate files
+	for i := 0; i < 5; i++ {
+		ents := []walpb.Entry{{Type: walpb.RecordType_EntryType, Index: uint64(i), Data: []byte(fmt.Sprintf("waldata%d", i+1))}}
+		err = w.Save(ents)
+		assert.Empty(t, err)
+		err = w.cut()
+		assert.Empty(t, err)
+	}
+
+	// to verify the WAL is not corrupted at this point
+	err = Verify(walDir, &walpb.Snapshot{})
+	assert.Empty(t, err)
+
+	walFiles, err := ioutil.ReadDir(walDir)
+	assert.Empty(t, err)
+
+	// corrupt the WAL by truncating one of the WAL files completely
+	err = os.Truncate(path.Join(walDir, walFiles[2].Name()), 0)
+	assert.Empty(t, err)
+
+	err = Verify(walDir, &walpb.Snapshot{})
+	assert.NotEmpty(t, err)
 }

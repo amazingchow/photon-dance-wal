@@ -24,7 +24,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/golang/protobuf/proto" // nolint
@@ -38,11 +37,6 @@ const (
 	// warnSyncDuration is the amount of time allotted to an fsync before
 	// logging a warning
 	warnSyncDuration = time.Second
-
-	// EverySec fsync only one time every second. Compromise.
-	EverySec int32 = iota + 1
-	// Always fsync after every write to the append only log. Slow, Safest.
-	Always
 )
 
 var (
@@ -87,8 +81,6 @@ type WAL struct {
 
 	locks []*fileutil.LockedFile // the locked files the WAL holds (the name is increasing)
 	fp    *FilePipeline
-
-	saveStrategy int32
 }
 
 // Create creates a WAL ready for appending records. The given metadata is
@@ -528,7 +520,7 @@ func Verify(walDir string, snap *walpb.Snapshot) error {
 				}
 				match = true
 			}
-		// We ignore all entry and state type records as these
+		// We ignore all entry type records as these
 		// are not necessary for validating the WAL contents
 		case walpb.RecordType_EntryType:
 		default:
@@ -609,7 +601,7 @@ func (w *WAL) cut() error {
 	}
 
 	// reopen newTail with its new path so calls to Name() match the wal filename format
-	newTail.Close()
+	newTail.Close() // nolint
 
 	if newTail, err = fileutil.LockFile(fpath, os.O_WRONLY, fileutil.PrivateFileMode); err != nil {
 		return err
@@ -728,10 +720,11 @@ func (w *WAL) Close() error {
 }
 
 func (w *WAL) saveEntry(e *walpb.Entry) error {
-	// TODO: add MustMarshalTo to reduce one allocation.
-	b, _ := proto.Marshal(e)
-	rec := &walpb.Record{Type: walpb.RecordType_EntryType, Data: b}
-	if err := w.encoder.encode(rec); err != nil {
+	b, err := proto.Marshal(e)
+	if err != nil {
+		return err
+	}
+	if err := w.encoder.encode(&walpb.Record{Type: walpb.RecordType_EntryType, Data: b}); err != nil {
 		return err
 	}
 	w.enti = e.Index
@@ -739,13 +732,7 @@ func (w *WAL) saveEntry(e *walpb.Entry) error {
 }
 
 func (w *WAL) needSync(entsLen int) bool {
-	if entsLen == 0 {
-		return false
-	}
-	if atomic.LoadInt32(&w.saveStrategy) == Always {
-		return true
-	}
-	return false
+	return entsLen != 0
 }
 
 func (w *WAL) Save(ents []walpb.Entry) error {

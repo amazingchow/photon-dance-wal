@@ -39,7 +39,6 @@ func NewFilePipeline(dir string, fileSize int64) *FilePipeline {
 	fp := &FilePipeline{
 		dir:   dir,
 		size:  fileSize,
-		count: 0,
 		filec: make(chan *fileutil.LockedFile),
 		errc:  make(chan error, 1),
 		donec: make(chan struct{}),
@@ -71,7 +70,7 @@ func (fp *FilePipeline) alloc() (f *fileutil.LockedFile, err error) {
 	}
 	if err = fileutil.Preallocate(f.File, fp.size, true); err != nil {
 		log.Error().Err(err).Int64("size", fp.size).Msg("failed to preallocate disk space when creating a new WAL file")
-		f.Close() // nolint
+		f.Close()
 		return nil, err
 	}
 	fp.count++
@@ -89,8 +88,8 @@ func (fp *FilePipeline) run() {
 		select {
 		case fp.filec <- f:
 		case <-fp.donec:
-			os.Remove(f.Name()) // nolint
-			f.Close()           // nolint
+			os.Remove(f.Name())
+			f.Close()
 			return
 		}
 	}

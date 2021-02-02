@@ -106,7 +106,7 @@ func (d *decoder) decodeRecord(rec *walpb.Record) error {
 
 	// skip crc checking if the record type is crcType
 	if rec.GetType() != walpb.RecordType_CrcType {
-		d.crc.Write(rec.Data) // nolint
+		d.crc.Write(rec.Data)
 		if err := rec.Validate(d.crc.Sum32()); err != nil {
 			if d.isTornEntry(data) {
 				return io.ErrUnexpectedEOF

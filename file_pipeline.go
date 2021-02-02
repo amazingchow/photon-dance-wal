@@ -24,13 +24,10 @@ import (
 	"github.com/amazingchow/photon-dance-wal/fileutil"
 )
 
-// filePipeline pipelines allocating disk space
-type filePipeline struct {
-	// dir to put files
-	dir string
-	// size of files to make, in bytes
-	size int64
-	// count number of files generated
+// FilePipeline pipelines allocating disk space
+type FilePipeline struct {
+	dir   string
+	size  int64
 	count int
 
 	filec chan *fileutil.LockedFile
@@ -38,8 +35,8 @@ type filePipeline struct {
 	donec chan struct{}
 }
 
-func newFilePipeline(dir string, fileSize int64) *filePipeline {
-	fp := &filePipeline{
+func NewFilePipeline(dir string, fileSize int64) *FilePipeline {
+	fp := &FilePipeline{
 		dir:   dir,
 		size:  fileSize,
 		filec: make(chan *fileutil.LockedFile),
@@ -52,7 +49,7 @@ func newFilePipeline(dir string, fileSize int64) *filePipeline {
 
 // Open returns a fresh file for writing. Rename the file before calling
 // Open again or there will be file collisions.
-func (fp *filePipeline) Open() (f *fileutil.LockedFile, err error) {
+func (fp *FilePipeline) Open() (f *fileutil.LockedFile, err error) {
 	select {
 	case f = <-fp.filec:
 	case err = <-fp.errc:
@@ -60,19 +57,19 @@ func (fp *filePipeline) Open() (f *fileutil.LockedFile, err error) {
 	return f, err
 }
 
-func (fp *filePipeline) Close() error {
+func (fp *FilePipeline) Close() error {
 	close(fp.donec)
 	return <-fp.errc
 }
 
-func (fp *filePipeline) alloc() (f *fileutil.LockedFile, err error) {
+func (fp *FilePipeline) alloc() (f *fileutil.LockedFile, err error) {
 	// count % 2 so this file isn't the same as the one last published
 	fpath := filepath.Join(fp.dir, fmt.Sprintf("%d.tmp", fp.count%2))
 	if f, err = fileutil.LockFile(fpath, os.O_CREATE|os.O_WRONLY, fileutil.PrivateFileMode); err != nil {
 		return nil, err
 	}
 	if err = fileutil.Preallocate(f.File, fp.size, true); err != nil {
-		log.Error().Err(err).Int64("size", fp.size).Msg("failed to preallocate space when creating a new WAL")
+		log.Error().Err(err).Int64("size", fp.size).Msg("failed to preallocate disk space when creating a new WAL file")
 		f.Close()
 		return nil, err
 	}
@@ -80,7 +77,7 @@ func (fp *filePipeline) alloc() (f *fileutil.LockedFile, err error) {
 	return f, nil
 }
 
-func (fp *filePipeline) run() {
+func (fp *FilePipeline) run() {
 	defer close(fp.errc)
 	for {
 		f, err := fp.alloc()

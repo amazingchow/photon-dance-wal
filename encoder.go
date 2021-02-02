@@ -28,10 +28,13 @@ import (
 	"github.com/amazingchow/photon-dance-wal/walpb"
 )
 
-// walPageBytes is the alignment for flushing records to the backing Writer.
-// It should be a multiple of the minimum sector size so that WAL can safely
-// distinguish between torn writes and ordinary data corruption.
-const walPageBytes = 8 * minSectorSize // 4KB
+const (
+	// walPageBytes is the alignment for flushing records to the backing Writer.
+	// It should be a multiple of the minimum sector size so that WAL can safely
+	// distinguish between torn writes and ordinary data corruption.
+	walPageBytes = 8 * minSectorSize // 4KB
+	oneMB        = 1024 * 1024
+)
 
 type encoder struct {
 	mu sync.Mutex
@@ -39,15 +42,18 @@ type encoder struct {
 
 	crc       hash.Hash32
 	buf       []byte
+	pbuf      *proto.Buffer
 	uint64buf []byte
 }
 
 func newEncoder(w io.Writer, prevCrc uint32, pageOffset int) *encoder {
+	buf := make([]byte, oneMB)
 	return &encoder{
 		bw:  ioutil.NewPageWriter(w, walPageBytes, pageOffset),
 		crc: crc.New(prevCrc, crcTable),
 		// 1MB buffer
-		buf:       make([]byte, 1024*1024),
+		buf:       buf,
+		pbuf:      proto.NewBuffer(buf),
 		uint64buf: make([]byte, 8),
 	}
 }
@@ -65,15 +71,14 @@ func (e *encoder) encode(rec *walpb.Record) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	e.crc.Write(rec.Data) // nolint
+	e.crc.Write(rec.Data)
 	rec.Crc = e.crc.Sum32()
 	var (
 		data []byte
 		err  error
-		n    int
 	)
 
-	if proto.Size(rec) > len(e.buf) {
+	if proto.Size(rec) > oneMB {
 		// !!! use protobuf/proto instead of gogo/proto
 		data, err = proto.Marshal(rec)
 		if err != nil {
@@ -81,13 +86,12 @@ func (e *encoder) encode(rec *walpb.Record) error {
 		}
 	} else {
 		// !!! use protobuf/proto instead of gogo/proto
-		pbuf := proto.NewBuffer(e.buf)
-		err = pbuf.Marshal(rec)
+		e.pbuf.Reset()
+		err = e.pbuf.Marshal(rec)
 		if err != nil {
 			return err
 		}
-		n = len(pbuf.Bytes())
-		data = e.buf[:n]
+		data = e.pbuf.Unread()
 	}
 
 	lenField, padBytes := encodeFrameSize(len(data))
@@ -114,9 +118,8 @@ func encodeFrameSize(dataBytes int) (lenField uint64, padBytes int) {
 
 func (e *encoder) flush() error {
 	e.mu.Lock()
-	_, err := e.bw.FlushN()
-	e.mu.Unlock()
-	return err
+	defer e.mu.Unlock()
+	return e.bw.Flush()
 }
 
 func writeUint64(w io.Writer, n uint64, buf []byte) error {

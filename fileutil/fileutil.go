@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package fileutil implements utility functions related to files and paths.
 package fileutil
 
 import (
@@ -27,6 +28,8 @@ import (
 const (
 	// PrivateFileMode grants owner to read/write a file.
 	PrivateFileMode = 0600
+	// PrivateDirMode grants owner to make/remove files inside the directory.
+	PrivateDirMode = 0700
 )
 
 // IsDirWriteable checks if dir is writable by writing and removing a file

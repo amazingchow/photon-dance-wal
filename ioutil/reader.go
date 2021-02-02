@@ -31,9 +31,6 @@ type limitedBufferReader struct {
 	n int
 }
 
-// !!!MY COMMENT BEGIN
-// The limitedBufferReader overrides the given reader.
-// !!!MY COMMENT END
 func (r *limitedBufferReader) Read(p []byte) (n int, err error) {
 	np := p
 	if len(np) > r.n {
